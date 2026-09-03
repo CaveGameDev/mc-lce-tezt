@@ -3,7 +3,6 @@ if (typeof window === 'undefined') {
   // SERVICE WORKER CONTEXT
   // ==========================================
   const CACHE_NAME = 'vfs-site-cache-v1';
-
   self.addEventListener('install', (event) => self.skipWaiting());
   self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
@@ -12,12 +11,13 @@ if (typeof window === 'undefined') {
     let requestToFetch = event.request;
 
     // 1. Virtual File System (VFS) Interception
-    if (url.pathname.startsWith('/vfs/')) {
+    // Switched to .includes so this script successfully routes subdirectory deployments
+    if (url.pathname.includes('/vfs/')) {
       
-      // EXCEPTION: Reroute relative service worker requests to the server root
+      // EXCEPTION: Reroute relative service worker requests
       if (url.pathname.endsWith('coi-serviceworker.js') || url.pathname.endsWith('sw.js')) {
         const scriptName = url.pathname.split('/').pop();
-        requestToFetch = new Request('/' + scriptName, requestToFetch);
+        requestToFetch = new Request('./' + scriptName, requestToFetch);
       } else {
         // Standard VFS cache lookup
         event.respondWith(
@@ -48,11 +48,6 @@ if (typeof window === 'undefined') {
         newHeaders.set('Cross-Origin-Opener-Policy', 'same-origin');
         newHeaders.set('Cache-Control', 'no-store');
         
-        // Allow the SW to control the root scope even if the request originated from /vfs/
-        if (url.pathname.startsWith('/vfs/') && (url.pathname.endsWith('coi-serviceworker.js') || url.pathname.endsWith('sw.js'))) {
-           newHeaders.set('Service-Worker-Allowed', '/');
-        }
-        
         return new Response(response.body, {
           status: response.status,
           statusText: response.statusText,
@@ -72,7 +67,8 @@ if (typeof window === 'undefined') {
     
     try {
       const scriptSrc = document.currentScript ? document.currentScript.src.split('/').pop() : 'sw.js';
-      await navigator.serviceWorker.register('/' + scriptSrc, { scope: '/' });
+      // Register relative so it doesn't fail root domain permissions checks
+      await navigator.serviceWorker.register('./' + scriptSrc);
       
       if (sessionStorage.getItem('coiReloadedBySelf') !== 'true') {
         sessionStorage.setItem('coiReloadedBySelf', 'true');
