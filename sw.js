@@ -24,7 +24,21 @@ if (typeof window === 'undefined') {
           caches.open(CACHE_NAME).then(async (cache) => {
             const matchedResponse = await cache.match(event.request, { ignoreSearch: true });
             if (matchedResponse) {
-              return matchedResponse;
+              // Hosting platforms send NO isolation headers on these cached
+              // responses. The game's wasm uses pthreads + SharedArrayBuffer,
+              // which only exist when every response it consumes (document,
+              // .js, .wasm, .data, workers) carries COOP + COEP. Stamp them
+              // here on the way out so a VFS-served game is just as
+              // cross-origin-isolated as the local dev build.
+              const headers = new Headers(matchedResponse.headers);
+              headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+              headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+              headers.set('Cross-Origin-Resource-Policy', 'same-origin');
+              return new Response(matchedResponse.body, {
+                status: matchedResponse.status,
+                statusText: matchedResponse.statusText,
+                headers,
+              });
             }
             return new Response(
               `<h1>404 - VFS File Not Found</h1><p>Path: ${url.pathname}</p>`,
