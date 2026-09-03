@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Loader</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #202020;
+      font-family: "Cascadia Mono", "Consolas", "Courier New", monospace;
+    }
+    #loader {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      background: #202020;
+    }
+    /* ---- Windows Terminal-style window, anchored top-left ---- */
+    #win {
+      position: absolute;
+      top: 24px;
+      left: 24px;
+      width: 860px;
+      max-width: calc(100vw - 48px);
+      height: 560px;
+      max-height: calc(100vh - 48px);
+      background: #0c0c0c;
+      border: 1px solid #2b2b2b;
+      border-radius: 6px;
+      box-shadow: 0 24px 60px rgba(0,0,0,.55);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #titlebar {
+      height: 30px;
+      flex: 0 0 auto;
+      background: #1f1f1f;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px 0 10px;
+      font-size: 12px;
+      color: #b8b8b8;
+      border-bottom: 1px solid #000;
+    }
+    #titlebar .app-title { display: flex; align-items: center; gap: 6px; }
+    #titlebar .app-title .glyph { color: #29c5f6; font-weight: bold; }
+    #titlebar .win-controls { display: flex; align-items: center; gap: 18px; color: #999; font-size: 12px; }
+    #titlebar .win-controls span.close:hover { color: #ff5f57; }
+    #tabbar {
+      height: 32px;
+      flex: 0 0 auto;
+      background: #181818;
+      display: flex;
+      align-items: flex-end;
+      padding: 0 6px;
+      gap: 2px;
+    }
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      height: 28px;
+      padding: 0 10px;
+      background: #0c0c0c;
+      border: 1px solid #2b2b2b;
+      border-bottom: none;
+      border-top-left-radius: 6px;
+      border-top-right-radius: 6px;
+      font-size: 12px;
+      color: #e6e6e6;
+    }
+    .tab .tab-icon {
+      width: 14px; height: 14px;
+      background: #012456;
+      color: #29c5f6;
+      border-radius: 2px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 8px; font-weight: bold;
+      flex: 0 0 auto;
+    }
+    .tab .tab-close { color: #777; font-size: 13px; margin-left: 4px; }
+    .newtab-btn {
+      color: #888;
+      display: flex; align-items: center; justify-content: center;
+      width: 26px; height: 22px;
+      margin: 4px 0 0 2px;
+      font-size: 14px;
+    }
+    #content {
+      flex: 1 1 auto;
+      background: #0c0c0c;
+      color: #cccccc;
+      font-size: 14.5px;
+      line-height: 1.45;
+      padding: 10px 14px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .banner { color: #cccccc; }
+    .muted { color: #808080; }
+    .link { color: #4d94ff; }
+    .prompt-line { color: #cccccc; }
+    .prompt-path { color: #ffffff; }
+    .cmd-yellow { color: #f4c430; }
+    .cursor { color: #cccccc; animation: blink 1s step-start infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    .out-line { color: #b0b0b0; }
+    .out-ok { color: #16c60c; }
+    .out-err { color: #ff5f57; }
+    .err-block { color: #ff5f57; }
+    .err-block .cat { color: #808080; padding-left: 4px; }
+    /* ---- Write-Progress block ---- */
+    #ps-progress { margin: 4px 0 6px 0; display: none; }
+    .ps-activity { color: #ffffff; font-weight: bold; }
+    .ps-status { color: #b0b0b0; padding-left: 3px; }
+    .ps-status .pct { color: #29c5f6; }
+    .ps-barline { display: flex; align-items: center; gap: 8px; padding-left: 3px; }
+    .ps-bracket { color: #808080; }
+    #ps-bar { display: inline-flex; white-space: pre; }
+    #ps-bar .fill { color: #012456; background: #29c5f6; }
+    #ps-bar .empty { color: #333333; background: #0c0c0c; }
+    .ps-percent-label { min-width: 4ch; text-align: right; color: #ffffff; }
+    #ps-eta { color: #808080; padding-left: 3px; font-size: 12.5px; }
+    iframe { width: 100%; height: 100%; border: none; display: none; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+  <div id="loader">
+    <div id="win">
+      <div id="titlebar">
+        <div class="app-title"><span class="glyph">&gt;_</span> Windows PowerShell</div>
+        <div class="win-controls"><span>&#8211;</span><span>&#9633;</span><span class="close">&times;</span></div>
+      </div>
+      <div id="tabbar">
+        <div class="tab">
+          <div class="tab-icon">PS</div>
+          Windows PowerShell
+          <span class="tab-close">&times;</span>
+        </div>
+        <div class="newtab-btn">+</div>
+      </div>
+      <div id="content">
+        <div class="banner">Windows PowerShell</div>
+        <div class="banner">Copyright (C) Microsoft Corporation. All rights reserved.</div>
+        <div>&nbsp;</div>
+        <div class="muted">Install the latest PowerShell for new features and improvements! <span class="link">https://aka.ms/PSWindows</span></div>
+        <div>&nbsp;</div>
+        <div class="prompt-line"><span class="prompt-path">PS C:\Users\Guest\Desktop&gt;</span> <span class="cmd-yellow" id="cmdText">.\init.ps1</span><span class="cursor" id="cursor">&#9608;</span></div>
+        
+        <div id="ps-progress">
+          <div class="ps-activity" id="psActivity">Downloading archive</div>
+          <div class="ps-status" id="psStatus">  Status: Starting <span class="pct">(0%)</span></div>
+          <div class="ps-barline">
+            <span class="ps-bracket">[</span><span id="ps-bar"></span><span class="ps-bracket">]</span>
+            <span class="ps-percent-label" id="psPercentLabel">0%</span>
+          </div>
+          <div id="ps-eta"></div>
+        </div>
+        <div id="out-log"></div>
+      </div>
+    </div>
+  </div>
+  <iframe id="app-frame"></iframe>
+  <script>
+    const CHUNKS = Array.from({ length: 39 }, (_, i) => {
+      const num = String(i + 1).padStart(2, '0');
+      return new URL(`client.zip.part${num}`, window.location.href).href;
+    });
+    
+    const BAR_WIDTH = 55;
+    const loaderEl = document.getElementById('loader');
+    const contentEl = document.getElementById('content');
+    const frameEl = document.getElementById('app-frame');
+    const cursorEl = document.getElementById('cursor');
+    const outLogEl = document.getElementById('out-log');
+    
+    const progressWrap = document.getElementById('ps-progress');
+    const psActivity = document.getElementById('psActivity');
+    const psStatus = document.getElementById('psStatus');
+    const psBar = document.getElementById('ps-bar');
+    const psPercentLabel = document.getElementById('psPercentLabel');
+    const psEta = document.getElementById('ps-eta');
+    let startTime = null;
+
+    function fmtBytes(n) {
+      if (n == null) return '?';
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+      return (n / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+
+    function fmtTime(sec) {
+      if (!isFinite(sec) || sec < 0) return '--:--';
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function scrollToBottom() {
+      contentEl.scrollTop = contentEl.scrollHeight;
+    }
+
+    function printLine(html, cls) {
+      const div = document.createElement('div');
+      div.className = 'out-line' + (cls ? ' ' + cls : '');
+      div.innerHTML = html;
+      outLogEl.appendChild(div);
+      scrollToBottom();
+    }
+
+    function renderProgress({ activity, statusText, percent, indeterminate, loaded, total }) {
+      progressWrap.style.display = 'block';
+      if (activity) psActivity.textContent = activity;
+      
+      const pctClamped = Math.max(0, Math.min(100, percent || 0));
+      const pctInt = Math.round(pctClamped);
+      
+      if (indeterminate) {
+        const sweepWidth = 10;
+        if (!renderProgress._t) renderProgress._t = 0;
+        renderProgress._t = (renderProgress._t + 2) % (BAR_WIDTH + sweepWidth);
+        const pos = renderProgress._t - sweepWidth;
+        
+        const chars = new Array(BAR_WIDTH).fill(' ');
+        for (let i = Math.max(0, pos); i < Math.min(BAR_WIDTH, pos + sweepWidth); i++) chars[i] = 'o';
+        
+        let html = '';
+        let curFill = chars[0] === 'o';
+        let run = '';
+        
+        for (let i = 0; i < BAR_WIDTH; i++) {
+          const isFill = chars[i] === 'o';
+          if (isFill !== curFill) {
+            html += '<span class="' + (curFill ? 'fill' : 'empty') + '">' + run + '</span>';
+            run = '';
+            curFill = isFill;
+          }
+          run += isFill ? 'o' : ' ';
+        }
+        html += '<span class="' + (curFill ? 'fill' : 'empty') + '">' + run + '</span>';
+        
+        psBar.innerHTML = html;
+        psPercentLabel.textContent = '';
+        psEta.textContent = '';
+      } else {
+        const filledChars = Math.round((pctClamped / 100) * BAR_WIDTH);
+        const emptyChars = BAR_WIDTH - filledChars;
+        psBar.innerHTML = 
+          '<span class="fill">' + 'o'.repeat(filledChars) + '</span>' +
+          '<span class="empty">' + ' '.repeat(emptyChars) + '</span>';
+        psPercentLabel.textContent = pctInt + '%';
+        
+        if (startTime && loaded != null && total) {
+          const elapsed = (Date.now() - startTime) / 1000;
+          const rate = loaded / Math.max(elapsed, 0.001);
+          const remaining = total - loaded;
+          const etaSec = rate > 0 ? remaining / rate : NaN;
+          
+          psEta.textContent = fmtBytes(loaded) + ' / ' + fmtBytes(total) + 
+            '   (' + fmtBytes(rate) + '/s)   ETA ' + fmtTime(etaSec);
+        } else {
+          psEta.textContent = '';
+        }
+      }
+      
+      if (statusText) {
+        psStatus.innerHTML = '  Status: ' + statusText + 
+          (indeterminate ? '' : ' <span class="pct">(' + pctInt + '%)</span>');
+      }
+      scrollToBottom();
+    }
+
+    let marqueeTimer = null;
+    function startMarquee(activity, statusText) {
+      stopMarquee();
+      marqueeTimer = setInterval(() => renderProgress({ activity, statusText, indeterminate: true }), 60);
+    }
+
+    function stopMarquee() {
+      if (marqueeTimer) { clearInterval(marqueeTimer); marqueeTimer = null; }
+    }
+
+    function fail(message, categoryInfo, errorId) {
+      stopMarquee();
+      progressWrap.style.display = 'none';
+      cursorEl.style.display = 'none';
+      
+      const div = document.createElement('div');
+      div.className = 'err-block';
+      const messageHtml = String(message).split('\n').join('<br>');
+      div.innerHTML = 
+        '.\\init.ps1 : ' + messageHtml + '<br>' +
+        '<span class="cat">+ CategoryInfo          : NotSpecified: (:) [], RuntimeException</span><br>' +
+        '<span class="cat">+ FullyQualifiedErrorId : ' + (errorId || 'VFSLoaderFailure') + '</span>';
+      outLogEl.appendChild(div);
+      scrollToBottom();
+    }
+
+    // 1. Register Service Worker & Enable Cross-Origin Isolation
+    if ('serviceWorker' in navigator) {
+      // Root scope registration allows COI headers to cover the main page context
+      navigator.serviceWorker.register('/sw.js', { scope: '/' })
+        .then(async () => {
+          if (!window.crossOriginIsolated) {
+            if (sessionStorage.getItem('coiReloaded') !== 'true') {
+              sessionStorage.setItem('coiReloaded', 'true');
+              window.location.reload();
+              return;
+            }
+          }
+          
+          sessionStorage.removeItem('coiReloaded');
+          cursorEl.style.display = 'none';
+          printLine('Initializing virtual file system&hellip;');
+          startVFSWorker();
+        })
+        .catch(err => {
+          fail('Service worker registration failed: ' + err.message, null, 'ServiceWorkerRegistrationFailed');
+          console.error(err);
+        });
+    } else {
+      fail('This browser does not support Service Workers.', null, 'ServiceWorkerUnsupported');
+    }
+
+    function startVFSWorker() {
+      startTime = Date.now();
+      
+      const workerCode = `
+        importScripts('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
+        const mimeTypes = {
+          'html': 'text/html', 'htm': 'text/html', 'css': 'text/css',
+          'js': 'text/javascript', 'json': 'application/json', 'png': 'image/png',
+          'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'gif': 'image/gif',
+          'svg': 'image/svg+xml', 'wasm': 'application/wasm', 'ico': 'image/x-icon'
+        };
+        
+        function getMime(filename) {
+          const ext = filename.split('.').pop().toLowerCase();
+          return mimeTypes[ext] || 'application/octet-stream';
+        }
+        
+        self.onmessage = async function(e) {
+          const { chunks, origin } = e.data;
+          
+          const abs = (path) => origin + path;
+          
+          try {
+            const settled = await Promise.allSettled(chunks.map(url => fetch(url)));
+            
+            const failures = [];
+            settled.forEach((result, i) => {
+              if (result.status === 'rejected') {
+                const reason = result.reason;
+                failures.push(chunks[i] + ' -> ' + (reason && reason.message ? reason.message : String(reason)));
+              } else if (!result.value.ok) {
+                failures.push(chunks[i] + ' -> HTTP ' + result.value.status + ' ' + result.value.statusText);
+              }
+            });
+            if (failures.length) {
+              throw new Error('Failed to fetch ' + failures.length + ' of ' + chunks.length + ' chunk(s):\\n' + failures.join('\\n'));
+            }
+            
+            const responses = settled.map(r => r.value);
+            
+            const sizes = responses.map(r => {
+              const len = r.headers.get('content-length');
+              return len ? parseInt(len, 10) : null;
+            });
+            const sizesKnown = sizes.every(s => s !== null);
+            const total = sizesKnown ? sizes.reduce((a, b) => a + b, 0) : null;
+            
+            let loaded = 0;
+            const downloadedBuffers = [];
+            
+            for (let i = 0; i < responses.length; i++) {
+              const res = responses[i];
+              const chunkName = chunks[i];
+              
+              if (res.body && res.body.getReader) {
+                const reader = res.body.getReader();
+                const parts = [];
+                let chunkLen = 0;
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  
+                  parts.push(value);
+                  chunkLen += value.length;
+                  loaded += value.length;
+                  
+                  self.postMessage({ 
+                    type: 'progress', phase: 'download', 
+                    loaded, total, chunkIndex: i, chunkCount: responses.length, chunkName
+                  });
+                }
+                const merged = new Uint8Array(chunkLen);
+                let off = 0;
+                for (const part of parts) { merged.set(part, off); off += part.length; }
+                downloadedBuffers.push(merged.buffer);
+              } else {
+                const buf = await res.arrayBuffer();
+                loaded += buf.byteLength;
+                downloadedBuffers.push(buf);
+                self.postMessage({ 
+                  type: 'progress', phase: 'download', 
+                  loaded, total, chunkIndex: i, chunkCount: responses.length, chunkName
+                });
+              }
+            }
+            
+            let totalBytes = downloadedBuffers.reduce((a, b) => a + b.byteLength, 0);
+            let combined = new Uint8Array(totalBytes);
+            let offset = 0;
+            for (const buf of downloadedBuffers) {
+              combined.set(new Uint8Array(buf), offset);
+              offset += buf.byteLength;
+            }
+            
+            self.postMessage({ type: 'progress', phase: 'unzip-start' });
+            const zip = await JSZip.loadAsync(combined);
+            combined = null; 
+            
+            const cache = await caches.open('vfs-site-cache-v1');
+            
+            const keys = await cache.keys();
+            for (const req of keys) await cache.delete(req);
+            
+            const entries = Object.keys(zip.files).filter(p => !zip.files[p].dir);
+            let entryPoint = null;
+            
+            for (let idx = 0; idx < entries.length; idx++) {
+              const path = entries[idx];
+              const zipEntry = zip.files[path];
+              
+              const blob = await zipEntry.async('blob');
+              const mime = getMime(path);
+              
+              const cleanPath = path.replace(/^\\//, '');
+              const targetUrl = '/vfs/' + cleanPath;
+              
+              await cache.put(
+                new Request(abs(targetUrl)),
+                new Response(new Blob([blob], { type: mime }), {
+                  status: 200,
+                  headers: { 'Content-Type': mime }
+                })
+              );
+              
+              if (!entryPoint && cleanPath.toLowerCase().endsWith('index.html')) {
+                entryPoint = targetUrl;
+              }
+              
+              self.postMessage({ 
+                type: 'progress', phase: 'extract', 
+                fileIndex: idx + 1, fileCount: entries.length, fileName: cleanPath 
+              });
+            }
+            
+            if (!entryPoint && entries.length > 0) {
+              const firstHtml = entries.find(p => p.toLowerCase().endsWith('.html'));
+              if (firstHtml) entryPoint = '/vfs/' + firstHtml.replace(/^\\//, '');
+            }
+            
+            self.postMessage({ type: 'complete', entryPoint });
+          } catch (err) {
+            self.postMessage({ type: 'error', error: err.message });
+          }
+        };
+      `;
+      
+      const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
+      const worker = new Worker(URL.createObjectURL(workerBlob));
+      
+      worker.onmessage = function(e) {
+        const data = e.data;
+        
+        if (data.type === 'progress') {
+          if (data.phase === 'download') {
+            stopMarquee();
+            const chunkLabel = 'core.' + (data.chunkIndex + 1) + ' of ' + data.chunkCount;
+            if (data.total) {
+              const pct = (data.loaded / data.total) * 70; 
+              renderProgress({ 
+                activity: 'Downloading archive', 
+                statusText: 'Fetching ' + chunkLabel, 
+                percent: pct,
+                loaded: data.loaded,
+                total: data.total
+              });
+            } else {
+              renderProgress({ 
+                activity: 'Downloading archive', 
+                statusText: 'Fetching ' + chunkLabel + ' \u2014 ' + fmtBytes(data.loaded) + ' received', 
+                indeterminate: true 
+              });
+            }
+          } else if (data.phase === 'unzip-start') {
+            renderProgress({ activity: 'Expanding archive', statusText: 'Reading archive contents', percent: 72 });
+          } else if (data.phase === 'extract') {
+            const pct = 72 + (data.fileIndex / data.fileCount) * 28;
+            renderProgress({ 
+              activity: 'Expanding archive', 
+              statusText: 'Writing ' + data.fileIndex + ' of ' + data.fileCount + ' files', 
+              percent: pct 
+            });
+          }
+        } else if (data.type === 'complete') {
+          stopMarquee();
+          renderProgress({ activity: 'Expanding archive', statusText: 'Complete', percent: 100 });
+          printLine('Virtual file system ready.', 'out-ok');
+          
+          setTimeout(() => {
+            loaderEl.style.display = 'none';
+            if (data.entryPoint) {
+              frameEl.style.display = 'block';
+              frameEl.src = data.entryPoint;
+            } else {
+              fail('Extraction succeeded but no index.html was found in the archive.', null, 'EntryPointNotFound');
+            }
+          }, 300);
+        } else if (data.type === 'error') {
+          fail(data.error, null, 'VFSLoaderFailure');
+        }
+      };
+      
+      renderProgress({ activity: 'Downloading archive', statusText: 'Resolving chunks', percent: 0 });
+      worker.postMessage({ chunks: CHUNKS, origin: location.origin });
+    }
+  </script>
+</body>
+</html>
