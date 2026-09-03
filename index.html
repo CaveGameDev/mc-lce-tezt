@@ -19,7 +19,7 @@
       z-index: 10;
       background: #202020;
     }
-    /* ---- Windows Terminal-style window, anchored top-left ---- */
+    /* ---- Windows Terminal-style window ---- */
     #win {
       position: absolute;
       top: 24px;
@@ -127,7 +127,6 @@
     #ps-bar .empty { color: #333333; background: #0c0c0c; }
     .ps-percent-label { min-width: 4ch; text-align: right; color: #ffffff; }
     #ps-eta { color: #808080; padding-left: 3px; font-size: 12.5px; }
-    iframe { width: 100%; height: 100%; border: none; display: none; }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
@@ -167,7 +166,7 @@
       </div>
     </div>
   </div>
-  <iframe id="app-frame"></iframe>
+
   <script>
     const CHUNKS = Array.from({ length: 39 }, (_, i) => {
       const num = String(i + 1).padStart(2, '0');
@@ -175,9 +174,7 @@
     });
     
     const BAR_WIDTH = 55;
-    const loaderEl = document.getElementById('loader');
     const contentEl = document.getElementById('content');
-    const frameEl = document.getElementById('app-frame');
     const cursorEl = document.getElementById('cursor');
     const outLogEl = document.getElementById('out-log');
     
@@ -203,9 +200,7 @@
       return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
     }
 
-    function scrollToBottom() {
-      contentEl.scrollTop = contentEl.scrollHeight;
-    }
+    function scrollToBottom() { contentEl.scrollTop = contentEl.scrollHeight; }
 
     function printLine(html, cls) {
       const div = document.createElement('div');
@@ -262,7 +257,6 @@
           const rate = loaded / Math.max(elapsed, 0.001);
           const remaining = total - loaded;
           const etaSec = rate > 0 ? remaining / rate : NaN;
-          
           psEta.textContent = fmtBytes(loaded) + ' / ' + fmtBytes(total) + 
             '   (' + fmtBytes(rate) + '/s)   ETA ' + fmtTime(etaSec);
         } else {
@@ -282,7 +276,6 @@
       stopMarquee();
       marqueeTimer = setInterval(() => renderProgress({ activity, statusText, indeterminate: true }), 60);
     }
-
     function stopMarquee() {
       if (marqueeTimer) { clearInterval(marqueeTimer); marqueeTimer = null; }
     }
@@ -303,20 +296,25 @@
       scrollToBottom();
     }
 
-    // 1. Register Service Worker & Enable Cross-Origin Isolation
+    // 1. Hard Lock: Force Service Worker jurisdiction before extracting
     if ('serviceWorker' in navigator) {
-      // Root scope registration allows COI headers to cover the main page context
-      navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      navigator.serviceWorker.register('./sw.js')
         .then(async () => {
-          if (!window.crossOriginIsolated) {
-            if (sessionStorage.getItem('coiReloaded') !== 'true') {
-              sessionStorage.setItem('coiReloaded', 'true');
+          let needsReload = false;
+          
+          // If the page navigated before the SW had legal control, the server throws 404
+          if (!navigator.serviceWorker.controller) needsReload = true;
+          if (!window.crossOriginIsolated) needsReload = true;
+
+          if (needsReload) {
+            if (sessionStorage.getItem('vfsBootLock') !== 'true') {
+              sessionStorage.setItem('vfsBootLock', 'true');
               window.location.reload();
               return;
             }
           }
           
-          sessionStorage.removeItem('coiReloaded');
+          sessionStorage.removeItem('vfsBootLock');
           cursorEl.style.display = 'none';
           printLine('Initializing virtual file system&hellip;');
           startVFSWorker();
@@ -331,6 +329,8 @@
 
     function startVFSWorker() {
       startTime = Date.now();
+      // Lock the VFS path relative to wherever this index.html actually lives
+      const baseVfsUrl = new URL('./vfs/', window.location.href).href;
       
       const workerCode = `
         importScripts('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
@@ -347,13 +347,10 @@
         }
         
         self.onmessage = async function(e) {
-          const { chunks, origin } = e.data;
-          
-          const abs = (path) => origin + path;
+          const { chunks, baseVfsUrl } = e.data;
           
           try {
             const settled = await Promise.allSettled(chunks.map(url => fetch(url)));
-            
             const failures = [];
             settled.forEach((result, i) => {
               if (result.status === 'rejected') {
@@ -368,7 +365,6 @@
             }
             
             const responses = settled.map(r => r.value);
-            
             const sizes = responses.map(r => {
               const len = r.headers.get('content-length');
               return len ? parseInt(len, 10) : null;
@@ -390,15 +386,10 @@
                 while (true) {
                   const { done, value } = await reader.read();
                   if (done) break;
-                  
                   parts.push(value);
                   chunkLen += value.length;
                   loaded += value.length;
-                  
-                  self.postMessage({ 
-                    type: 'progress', phase: 'download', 
-                    loaded, total, chunkIndex: i, chunkCount: responses.length, chunkName
-                  });
+                  self.postMessage({ type: 'progress', phase: 'download', loaded, total, chunkIndex: i, chunkCount: responses.length, chunkName });
                 }
                 const merged = new Uint8Array(chunkLen);
                 let off = 0;
@@ -408,10 +399,7 @@
                 const buf = await res.arrayBuffer();
                 loaded += buf.byteLength;
                 downloadedBuffers.push(buf);
-                self.postMessage({ 
-                  type: 'progress', phase: 'download', 
-                  loaded, total, chunkIndex: i, chunkCount: responses.length, chunkName
-                });
+                self.postMessage({ type: 'progress', phase: 'download', loaded, total, chunkIndex: i, chunkCount: responses.length, chunkName });
               }
             }
             
@@ -428,7 +416,6 @@
             combined = null; 
             
             const cache = await caches.open('vfs-site-cache-v1');
-            
             const keys = await cache.keys();
             for (const req of keys) await cache.delete(req);
             
@@ -442,30 +429,24 @@
               const blob = await zipEntry.async('blob');
               const mime = getMime(path);
               
-              const cleanPath = path.replace(/^\\//, '');
-              const targetUrl = '/vfs/' + cleanPath;
+              // Mathematically normalize paths. Strips weird './' or '//' artifacts so the cache perfectly matches the browser navigation request.
+              const cleanPath = path.replace(/^[\\\\/]+/, '');
+              const targetUrlObj = new URL(cleanPath, baseVfsUrl);
+              const targetUrl = targetUrlObj.href;
               
               await cache.put(
-                new Request(abs(targetUrl)),
+                new Request(targetUrl),
                 new Response(new Blob([blob], { type: mime }), {
                   status: 200,
                   headers: { 'Content-Type': mime }
                 })
               );
               
-              if (!entryPoint && cleanPath.toLowerCase().endsWith('index.html')) {
+              if (!entryPoint && targetUrlObj.pathname.toLowerCase().endsWith('index.html')) {
                 entryPoint = targetUrl;
               }
               
-              self.postMessage({ 
-                type: 'progress', phase: 'extract', 
-                fileIndex: idx + 1, fileCount: entries.length, fileName: cleanPath 
-              });
-            }
-            
-            if (!entryPoint && entries.length > 0) {
-              const firstHtml = entries.find(p => p.toLowerCase().endsWith('.html'));
-              if (firstHtml) entryPoint = '/vfs/' + firstHtml.replace(/^\\//, '');
+              self.postMessage({ type: 'progress', phase: 'extract', fileIndex: idx + 1, fileCount: entries.length, fileName: cleanPath });
             }
             
             self.postMessage({ type: 'complete', entryPoint });
@@ -480,36 +461,19 @@
       
       worker.onmessage = function(e) {
         const data = e.data;
-        
         if (data.type === 'progress') {
           if (data.phase === 'download') {
             stopMarquee();
             const chunkLabel = 'core.' + (data.chunkIndex + 1) + ' of ' + data.chunkCount;
             if (data.total) {
-              const pct = (data.loaded / data.total) * 70; 
-              renderProgress({ 
-                activity: 'Downloading archive', 
-                statusText: 'Fetching ' + chunkLabel, 
-                percent: pct,
-                loaded: data.loaded,
-                total: data.total
-              });
+              renderProgress({ activity: 'Downloading archive', statusText: 'Fetching ' + chunkLabel, percent: (data.loaded / data.total) * 70, loaded: data.loaded, total: data.total });
             } else {
-              renderProgress({ 
-                activity: 'Downloading archive', 
-                statusText: 'Fetching ' + chunkLabel + ' \u2014 ' + fmtBytes(data.loaded) + ' received', 
-                indeterminate: true 
-              });
+              renderProgress({ activity: 'Downloading archive', statusText: 'Fetching ' + chunkLabel + ' \u2014 ' + fmtBytes(data.loaded) + ' received', indeterminate: true });
             }
           } else if (data.phase === 'unzip-start') {
             renderProgress({ activity: 'Expanding archive', statusText: 'Reading archive contents', percent: 72 });
           } else if (data.phase === 'extract') {
-            const pct = 72 + (data.fileIndex / data.fileCount) * 28;
-            renderProgress({ 
-              activity: 'Expanding archive', 
-              statusText: 'Writing ' + data.fileIndex + ' of ' + data.fileCount + ' files', 
-              percent: pct 
-            });
+            renderProgress({ activity: 'Expanding archive', statusText: 'Writing ' + data.fileIndex + ' of ' + data.fileCount + ' files', percent: 72 + (data.fileIndex / data.fileCount) * 28 });
           }
         } else if (data.type === 'complete') {
           stopMarquee();
@@ -517,10 +481,9 @@
           printLine('Virtual file system ready.', 'out-ok');
           
           setTimeout(() => {
-            loaderEl.style.display = 'none';
             if (data.entryPoint) {
-              frameEl.style.display = 'block';
-              frameEl.src = data.entryPoint;
+              // Now that we confirmed jurisdiction in the loader, this is guaranteed to route to the SW layer
+              window.location.replace(data.entryPoint);
             } else {
               fail('Extraction succeeded but no index.html was found in the archive.', null, 'EntryPointNotFound');
             }
@@ -531,7 +494,7 @@
       };
       
       renderProgress({ activity: 'Downloading archive', statusText: 'Resolving chunks', percent: 0 });
-      worker.postMessage({ chunks: CHUNKS, origin: location.origin });
+      worker.postMessage({ chunks: CHUNKS, baseVfsUrl: baseVfsUrl });
     }
   </script>
 </body>
