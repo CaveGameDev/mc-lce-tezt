@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Minecraft</title>
+    <style>
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%;
+                   background: #000; overflow: hidden; }
+      canvas.emscripten {
+        border: 0px none; background-color: black;
+        width: 100%; height: 100%; display: block;
+        image-rendering: pixelated; outline: none;
+      }
+      #status { position: absolute; top: 12px; left: 12px; color: #fff;
+                font: 14px monospace; }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas" class="emscripten" oncontextmenu="event.preventDefault()"
+            tabindex="-1"></canvas>
+    <div id="status">Downloading...</div>
+    <script>
+      // 4jcraft: shared-array-buffer support - register the COOP/COEP header
+      // service worker, then let it reload the page once so the navigation
+      // itself is cross-origin isolated. The worker also serves every response
+      // fresh (Cache-Control: no-store), so a rebuilt .js can never be paired
+      // with a stale cached .wasm (the ASM_CONSTS mismatch crash).
+      var Module = {
+        canvas: document.getElementById('canvas'),
+        setStatus: function (text) {
+          document.getElementById('status').textContent = text || '';
+        },
+      };
+      Module.setStatus('Downloading...');
+      window.addEventListener('error', function () {
+        Module.setStatus('Exception thrown, see JavaScript console');
+      });
+      if (window.crossOriginIsolated === false &&
+          navigator.serviceWorker &&
+          location.protocol.indexOf('http') === 0) {
+        navigator.serviceWorker.register('coi-serviceworker.js').then(
+          function () {
+            if (sessionStorage.getItem('coiReloadedBySelf') !== 'true') {
+              sessionStorage.setItem('coiReloadedBySelf', 'true');
+              location.reload();
+            } else {
+              sessionStorage.removeItem('coiReloadedBySelf');
+            }
+          });
+      }
+    </script>
+    <script async type="text/javascript" src="Minecraft.Client.js"></script>
+  </body>
+</html>
